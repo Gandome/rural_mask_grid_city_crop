@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.nc
+*.png
+*.csv
+outputs/
+results/
+plots/
+.env
+
