@@ -1,0 +1,2 @@
+City,Country,Period,Mean,Median,Mean - Median,Std,Min,Max,Unit,GridCells,TotalWeight
+Paris,France,2021-12-01,0.51,0.39,0.12,0.32,-0.19,1.35,,299,226.87

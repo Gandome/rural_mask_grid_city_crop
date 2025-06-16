@@ -1,10 +1,10 @@
 __pycache__/
-*.pyc
+# *.pyc
 *.nc
-*.png
-*.csv
-outputs/
-results/
-plots/
+# *.png
+# *.csv
+# outputs/
+# results/
+# plots/
 .env
 
