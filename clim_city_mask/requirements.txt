@@ -5,15 +5,17 @@ geopandas
 matplotlib
 tqdm
 shapely
-
+re
 shutil
 glob
 os
+scipy
 concurrent
 time
 datetime
 multiprocessing
 sklearn
-
-
+mpl_toolkits
+rasterio
+rioxarray
 

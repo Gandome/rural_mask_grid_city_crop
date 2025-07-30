@@ -1,0 +1,3 @@
+City,Country,Period,Mean,Median,Mean - Median,Std,Min,Max,Unit,GridCells,TotalWeight
+Lyon,France,1995-06-01,28.79,28.57,0.22,0.83,27.14,30.42,°C,60,40.87
+Lyon,France,1995-09-01,19.89,19.82,0.08,0.54,18.86,20.92,°C,60,40.87
