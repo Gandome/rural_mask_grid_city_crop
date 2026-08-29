@@ -1,19 +1,16 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name="grid_uhi_mask",
-    version="0.1",
+    version="2.0.0",
     packages=find_packages(),
-    install_requires=[
-        "xarray", "numpy", "pandas", "scikit-learn"
-    ],
-    author="Gandome Mayeul QUenum",
-    description="Grid-based UHI calculation from gridded datasets",
-    url="https://github.com/Gandome/grid_uhi_mask",
+    install_requires=["numpy>=1.24", "xarray>=2023.1", "netCDF4>=1.6"],
+    author="Gandome Mayeul Quenum",
+    description="MOD_Mask v2: grid-based rural-reference selection and UHI calculation",
+    url="https://github.com/Gandome/rural_mask_grid_city_crop",
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License"
+        "License :: OSI Approved :: MIT License",
     ],
-    python_requires='>=3.8',
+    python_requires=">=3.9",
 )
-

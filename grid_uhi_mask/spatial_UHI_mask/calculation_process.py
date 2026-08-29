@@ -1,154 +1,240 @@
-import shutil
+"""Per-file UHI processing for MOD_Mask version 2."""
+from __future__ import annotations
+
+import datetime as _dt
+import importlib.util
+import os
+from pathlib import Path
+from typing import Mapping, Sequence, Tuple
+
 import numpy as np
 import xarray as xr
-import glob as gb
-import os
-import concurrent.futures
-import time
-import datetime
-from multiprocessing import Pool
-# import dask.array as da
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.linear_model import LinearRegression
 
-from spatial_UHI_mask.utils import kelvin_humidity_convert, format_units, calculate_uhi
-# from .parallel_process import process_folder_parallel
-# from spatial_UHI_mask.urban_mask import classify_grid_points
+from .calculation import compute_uhi_timeseries
+from .io_utils import get_lon_lat_2d, standardize_tas, temperature_to_celsius
+from .rural_reference import RuralReference, diagnostics_from_references
 
 
-# Function to process a single file
-def process_file(file_path, Elevation, output_path, sea_mask, rural_threshold, urban_threshold, rural_frac, urban_frac,
-                 urban_grid_points, Min_Value, nbg, max_iterations, nO, height_lim1, height_lim2, height_lim3, height_lim4):
+def _log(msg: str):
+    print(msg, flush=True)
+
+
+def _mask_3d(arr: np.ndarray, sea_water_mask: np.ndarray) -> np.ndarray:
+    return np.where(sea_water_mask[None, :, :], np.nan, arr).astype(np.float32)
+
+
+def _copy_optional_grid_metadata(src: xr.Dataset, dst: xr.Dataset):
+    """Copy useful horizontal-grid metadata when dimensions are compatible."""
+    for name in ["lon_bnds", "lat_bnds", "rotated_pole", "Lambert_Conformal", "lambert_conformal"]:
+        if name in src and name not in dst:
+            try:
+                dst[name] = src[name]
+            except Exception:
+                pass
+    if "lon_bnds" in dst:
+        dst["lon"].attrs["bounds"] = "lon_bnds"
+    if "lat_bnds" in dst:
+        dst["lat"].attrs["bounds"] = "lat_bnds"
+
+
+def process_file(
+    file_path,
+    elevation,
+    output_path,
+    sea_water_mask,
+    references: Mapping[Tuple[int, int], RuralReference],
+    height_limits: Sequence[float] = (100, 200, 300, 500),
+    lapse_rate: float = 0.0065,
+    urban_threshold: float = 0.20,
+    rural_threshold: float = 0.60,
+    sea_water_threshold: float = 0.30,
+    min_value_requested: float = 70.0,
+    nO: int = 2,
+    initial_nbg: int = 4,
+    max_iterations: int = 26,
+    min_ratio_floor: float = 50.0,
+    ratio_step: float = 5.0,
+    output_prefix: str = "Urban_Heat_Island_data_",
+    spatial_slice=None,
+):
+    """Process one NetCDF file using static precomputed rural references."""
+    path = Path(file_path)
+    out_dir = Path(output_path)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    filename = path.name
+
+    _log("\n" + "-" * 90)
+    _log(f"Processing file: {filename}")
+    _log("-" * 90)
+
     try:
-        filename = os.path.basename(file_path)
-       # print(f'the current treat file is {filename}')
-        temperature_data = xr.open_dataset(file_path, chunks={'time': 'auto'})
-        temperature_data['tas'] -= 273.15
-        temperature_data = temperature_data.squeeze()
-        temperature = temperature_data['tas']
+        with xr.open_dataset(path) as ds:
+            if "tas" not in ds:
+                raise KeyError(f"tas not found in {filename}; available={list(ds.data_vars)}")
 
-       # print(f'dims of data: {temperature.shape}')
-        lon = temperature.lon.values #[0, :]
-        lat = temperature.lat.values #[:, 0]
-        lon_bnds = temperature_data['lon_bnds'].values
-        lat_bnds = temperature_data['lat_bnds'].values
-        height = [2.0]
+            tas = standardize_tas(ds["tas"])
+            if spatial_slice is not None:
+                ys, xs = spatial_slice
+                tas = tas.isel(y=ys, x=xs)
+            tas = temperature_to_celsius(tas)
+            tas_np = np.asarray(tas.values, dtype=np.float32)
+            elev_np = np.asarray(elevation, dtype=np.float32)
+            sw_np = np.asarray(sea_water_mask, dtype=bool)
 
-#         calculate_uhi(temperature, rural_threshold, urban_threshold, rural_frac, urban_frac, urban_grid_points, Min_Value, nbg, max_iterations, nO)
-        def calculate_uhi_for_time_step(t):
-            return calculate_uhi(temperature[t].values, Elevation.values, rural_threshold, urban_threshold, rural_frac.values,
-                                 urban_frac.values, urban_grid_points,  Min_Value, nbg, max_iterations, nO,
-                                 height_lim1, height_lim2, height_lim3, height_lim4)
+            if tas_np.shape[1:] != elev_np.shape:
+                raise ValueError(
+                    f"tas horizontal shape {tas_np.shape[1:]} does not match PGD/elevation {elev_np.shape}"
+                )
+            if sw_np.shape != elev_np.shape:
+                raise ValueError(f"sea/water mask shape {sw_np.shape} != elevation {elev_np.shape}")
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            uhi_results = list(executor.map(calculate_uhi_for_time_step, range(temperature.shape[0])))
+            nt, ny, nx = tas_np.shape
+            n_valid_refs = sum(int(ref.valid) for ref in references.values())
+            _log(f"[{filename}] timesteps               : {nt}")
+            _log(f"[{filename}] grid                    : {ny} x {nx}")
+            _log(f"[{filename}] urban reference entries : {len(references)}")
+            _log(f"[{filename}] accepted references      : {n_valid_refs}")
 
-        uhi_data1, uhi_data_elv1, uhi_data_elv2, uhi_data_elv3, uhi_data_elv4, rural_mean_data, \
-        rural_mean_data_elv1, rural_mean_data_elv2, rural_mean_data_elv3, rural_mean_data_elv4, \
-        Min_Value, current_nbg = zip(*uhi_results)
+            results = compute_uhi_timeseries(
+                tas_c=tas_np,
+                elevation=elev_np,
+                references=references,
+                height_limits=height_limits,
+                lapse_rate=lapse_rate,
+            )
 
-        uhi_data1 = np.where(sea_mask.values, np.nan, np.array(uhi_data1))
-        uhi_data_elv1 = np.where(sea_mask.values, np.nan, np.array(uhi_data_elv1))
-        uhi_data_elv2 = np.where(sea_mask.values, np.nan, np.array(uhi_data_elv2))
-        uhi_data_elv3 = np.where(sea_mask.values, np.nan, np.array(uhi_data_elv3))
-        uhi_data_elv4 = np.where(sea_mask.values, np.nan, np.array(uhi_data_elv4))
-        ###************
-        rural_mean_data = np.where(sea_mask.values, np.nan, np.array(rural_mean_data))
-        rural_mean_data_elv1 = np.where(sea_mask.values, np.nan, np.array(rural_mean_data_elv1))
-        rural_mean_data_elv2 = np.where(sea_mask.values, np.nan, np.array(rural_mean_data_elv2))
-        rural_mean_data_elv3 = np.where(sea_mask.values, np.nan, np.array(rural_mean_data_elv3))
-        rural_mean_data_elv4 = np.where(sea_mask.values, np.nan, np.array(rural_mean_data_elv4))
-        ####        
-        Min_Value_values = np.where(sea_mask.values, np.nan, np.array(Min_Value))
-        current_nbg_values = np.where(sea_mask.values, np.nan, np.array(current_nbg))
+            lon, lat = get_lon_lat_2d(ds, tas, spatial_slice=spatial_slice)
+            data_vars = {
+                "UHI_px": (
+                    ("time", "y", "x"),
+                    _mask_3d(results["UHI_px"], sw_np),
+                    {
+                        "long_name": "Urban heat island without elevation filtering",
+                        "units": "degC",
+                    },
+                ),
+                "rural_temperature_mean": (
+                    ("time", "y", "x"),
+                    _mask_3d(results["rural_temperature_mean"], sw_np),
+                    {
+                        "long_name": "Mean rural reference temperature",
+                        "units": "degC",
+                    },
+                ),
+            }
 
-        uhi_attrs = {'long_name': 'Urban Heat Island (UHI)',
-                     'units': 'degree Celsius',
-                     'description': 'Urban Heat Island effect data',
-                     'creation_date': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                     'corresponding_name': 'Mayeul Quenum',
-                     'contact': '+33(0)561079054',
-                     'email': 'mayeul.quenum@meteo.fr',
-                     'frequency': '1hr',
-                     'institute_id': 'CNRM',
-                     'model_id': 'CNRM-AROME46t1',
-                     'project_id': 'IDF-CONF',
-                     'domain': 'NFR2.5',
-                     'rcm_version_id': 'v1',
-                     'nesting_level': '1',
-                     'comment_nesting': ('These are results of the 1st nest of a 1-nest-approach;\n'
-                                         'CNRM-AROME CP-RCM is driven by ECMWF-ERA5 reanalysis'),
-                     'comment_1nest': ('IDF configuration NFR2.5 CNRM-AROME46t1 ECMWF-ERA5 v1 : NFR009b.\n'
-                                       'Ref: Caillaud et al. (2021). https://doi.org/10.1007/s00382-020-05558-y'),
-                     'nominal_resolution': '2.5km',
-                     'grid': 'regional-zone : C',
-                     'grid_mapping_name': 'lambert conformal conic',
-                     'longitude_of_central_meridian': '2.34f',
-                     'standard_parallel': '48.85f',
-                     'latitude_of_projection_origin': '48.85f',
+            for lim in map(float, height_limits):
+                tag = f"{int(lim) if float(lim).is_integer() else lim:g}"
+                data_vars[f"UHI_LR{tag}"] = (
+                    ("time", "y", "x"),
+                    _mask_3d(results["UHI_LR"][lim], sw_np),
+                    {
+                        "long_name": f"Urban heat island with |urban-rural elevation difference| <= {tag} m",
+                        "units": "degC",
+                        "elevation_filter_m": float(lim),
+                        "lapse_rate_K_m-1": float(lapse_rate),
+                    },
+                )
+                data_vars[f"rural_temperature_LR{tag}_mean"] = (
+                    ("time", "y", "x"),
+                    _mask_3d(results["rural_temperature_LR_mean"][lim], sw_np),
+                    {
+                        "long_name": f"Elevation-filtered and lapse-rate-corrected rural reference temperature ({tag} m)",
+                        "units": "degC",
+                        "elevation_filter_m": float(lim),
+                        "lapse_rate_K_m-1": float(lapse_rate),
+                    },
+                )
 
-                     'product': 'output',
-                     'references': 'https://www.cnrm.meteo.fr/spip.php?article1094&lang=en',
-                     'filename': (f"Urban Heat Island data for {filename[4:]}:\n"
-                                  f"- Rural grid threshold: >= {rural_threshold}\n"
-                                  f"- Urban grid threshold: >= {urban_threshold}\n"
-                                  f"- Minimum distance of the rural grids to the city: {2.5 * nO} km"),
-                     'CDO': 'Climate Data Operators version 2.0.4 (https://mpimet.mpg.de/cdo)'
+            diag = diagnostics_from_references(references, (ny, nx), sw_np)
+            for name, da in diag.data_vars.items():
+                data_vars[name] = (da.dims, da.values, dict(da.attrs))
 
-                }
+            out_ds = xr.Dataset(
+                data_vars=data_vars,
+                coords={
+                    "time": tas["time"],
+                    "lon": (("y", "x"), lon),
+                    "lat": (("y", "x"), lat),
+                },
+                attrs={
+                    "title": "Urban Heat Island from MOD_Mask version 2",
+                    "method_version": "2.0.0",
+                    "creation_date": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "classification_order": (
+                        "sea_water_mask=(sea_fraction+water_fraction)>sea_water_threshold is excluded first; "
+                        "urban and rural masks are then defined over land only"
+                    ),
+                    "computation_strategy": (
+                        "Static rural reference cells are identified once per experiment and reused for all input files; "
+                        "all timesteps are then processed together for each urban grid cell"
+                    ),
+                    "search_window": (
+                        "Square outer window (2*nbg+1)^2 with central square exclusion (2*nO+1)^2; "
+                        "only non-sea/water candidate cells enter the denominator"
+                    ),
+                    "failed_search_rule": (
+                        "Requested rural availability ratio is reduced in fixed steps down to the minimum floor; "
+                        "if the floor is still unmet after the maximum search radius, the urban cell is invalid and UHI remains NaN"
+                    ),
+                    "elevation_correction": (
+                        "For each LR threshold, rural cells are first filtered by |z_urban-z_rural| <= LR; "
+                        "their mean temperature is then adjusted to urban elevation as T_r,adj=T_r-lapse_rate*mean(z_urban-z_rural)"
+                    ),
+                    "urban_threshold": float(urban_threshold),
+                    "rural_threshold": float(rural_threshold),
+                    "sea_water_threshold": float(sea_water_threshold),
+                    "Min_Value_requested": float(min_value_requested),
+                    "Min_Value_floor": float(min_ratio_floor),
+                    "Min_Value_step": float(ratio_step),
+                    "nO": int(nO),
+                    "initial_nbg": int(initial_nbg),
+                    "max_iterations": int(max_iterations),
+                    "height_limits_m": ", ".join(f"{float(v):g}" for v in height_limits),
+                    "lapse_rate_K_m-1": float(lapse_rate),
+                    "input_file": filename,
+                    "tas_spatial_slice": (
+                        "full_grid" if spatial_slice is None else
+                        f"y[{spatial_slice[0].start}:{spatial_slice[0].stop}],"
+                        f"x[{spatial_slice[1].start}:{spatial_slice[1].stop}]"
+                    ),
+                },
+            )
+            _copy_optional_grid_metadata(ds, out_ds)
 
-        # Define compression encoding for variables
-        comp = dict(zlib=True, complevel=9)
-        encoding = {
-             var: comp for var in [
-                 'UHI_px', f'UHI_LR{height_lim1}', f'UHI_LR{height_lim2}', f'UHI_LR{height_lim3}', f'UHI_LR{height_lim4}',
-                 f'UHI_px_mean', f'UHI_LR{height_lim1}_mean', f'UHI_LR{height_lim2}_mean',
-                 f'UHI_LR{height_lim3}_mean', f'UHI_LR{height_lim4}_mean', 'Min_Value_used', 'nbg'
-             ]
-        }
-        encoding.update({
-            'lon_bnds': comp,
-            'lat_bnds': comp,
-            'lon': {'dtype': 'float64'},
-            'lat': {'dtype': 'float64'}
-        })
+            # Preserve source time/global metadata that are safe and useful.
+            for key in ["frequency", "institute_id", "model_id", "project_id", "domain", "nominal_resolution", "grid"]:
+                if key in ds.attrs and key not in out_ds.attrs:
+                    out_ds.attrs[key] = ds.attrs[key]
 
+            # Compression is used when an HDF5-capable backend is available.
+            # scipy.io.netcdf does not support zlib/complevel.
+            if importlib.util.find_spec("netCDF4") is not None:
+                engine = "netcdf4"
+            elif importlib.util.find_spec("h5netcdf") is not None:
+                engine = "h5netcdf"
+            else:
+                engine = "scipy"
 
-        dataset_uhi = xr.Dataset({
-            'UHI_px': (['time', 'y', 'x'], uhi_data1),
-            f'UHI_LR{height_lim1}': (['time', 'y', 'x'], uhi_data_elv1),
-            f'UHI_LR{height_lim2}': (['time', 'y', 'x'], uhi_data_elv2),
-            f'UHI_LR{height_lim3}': (['time', 'y', 'x'], uhi_data_elv3),
-            f'UHI_LR{height_lim4}': (['time', 'y', 'x'], uhi_data_elv4),
-            f'UHI_px_mean': (['time', 'y', 'x'], rural_mean_data),
-            f'UHI_LR{height_lim1}_mean': (['time', 'y', 'x'], rural_mean_data_elv1),
-            f'UHI_LR{height_lim2}_mean': (['time', 'y', 'x'], rural_mean_data_elv2),
-            f'UHI_LR{height_lim3}_mean': (['time', 'y', 'x'], rural_mean_data_elv3),
-            f'UHI_LR{height_lim4}_mean': (['time', 'y', 'x'], rural_mean_data_elv4),
-            'Min_Value_used': (['time', 'y', 'x'], Min_Value_values),
-            'nbg': (['time', 'y', 'x'], current_nbg_values),
+            encoding = {}
+            if engine != "scipy":
+                float_comp = {"zlib": True, "complevel": 4, "dtype": "float32"}
+                int_comp = {"zlib": True, "complevel": 4}
+                for var in out_ds.data_vars:
+                    if out_ds[var].ndim >= 1 and np.issubdtype(out_ds[var].dtype, np.floating):
+                        encoding[var] = dict(float_comp)
+                    elif out_ds[var].ndim >= 2 and np.issubdtype(out_ds[var].dtype, np.integer):
+                        encoding[var] = dict(int_comp)
 
-        },
-            coords={'time': temperature_data['time'],
-                    'lon': (['y', 'x'], lon),
-                    'lat': (['y', 'x'], lat),
-                    'corner': [0, 1, 2, 3],
-                    'height': (['height'], height)
-                   },
-            attrs=uhi_attrs)
-        # Assign bounds with explicit dimensions
-        dataset_uhi['lon_bnds'] = (('y', 'x', 'corner'), lon_bnds)
-        dataset_uhi['lat_bnds'] = (('y', 'x', 'corner'), lat_bnds)
+            suffix = filename[4:] if filename.startswith("tas_") else filename
+            out_file = out_dir / f"{output_prefix}{suffix}"
+            _log(f"[{filename}] writing output ({engine} backend): {out_file}")
+            out_ds.to_netcdf(out_file, encoding=encoding, engine=engine)
+            out_ds.close()
 
-        # Add CF-compliant metadata
-        dataset_uhi['lon'].attrs['bounds'] = 'lon_bnds'
-        dataset_uhi['lat'].attrs['bounds'] = 'lat_bnds'
+        _log(f"[{filename}] saved successfully.")
+        return str(out_file)
 
-        # Set output filename
-        print('OOKKKKKKKKK')
-        output_filename = f'Urban_Heat_Island_data_{filename[4:]}'
-        dataset_uhi.to_netcdf(os.path.join(output_path, output_filename), encoding=encoding)
-    except Exception as e:
-        print(f"Error processing {file_path}: {e}")
-
-   
+    except Exception as exc:
+        _log(f"ERROR processing {file_path}: {type(exc).__name__}: {exc}")
+        raise

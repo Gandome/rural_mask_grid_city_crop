@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use MOD_Mask or this software in research, please cite this software and the associated methodological paper when available."
+title: "MOD_Mask: adaptive rural-reference masking and urban heat island analysis"
+type: software
+authors:
+  - family-names: Quenum
+    given-names: Gandome Mayeul
+version: 2.0.0
+date-released: 2026-08-24
+license: MIT
+repository-code: "https://github.com/Gandome/rural_mask_grid_city_crop"
