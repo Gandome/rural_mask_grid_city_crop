@@ -159,7 +159,7 @@ def process_file(
                 },
                 attrs={
                     "title": "Urban Heat Island from MOD_Mask version 2",
-                    "method_version": "2.0.0",
+                    "method_version": "2.0.1",
                     "creation_date": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "classification_order": (
                         "sea_water_mask=(sea_fraction+water_fraction)>sea_water_threshold is excluded first; "

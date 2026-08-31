@@ -1,4 +1,4 @@
-# grid_uhi_mask — MOD_Mask/UHI Version 2
+# grid_uhi_mask — MOD_Mask/UHI Version 2.0.1
 
 `grid_uhi_mask` computes an urban heat island field for every model urban grid cell by comparing its temperature with an adaptively selected rural reference mask.
 
@@ -40,10 +40,26 @@ are retained. Their time-dependent mean temperature is adjusted to the urban ele
 - `rural_search_success`
 - `rural_reference_frequency`
 
+## Grid compatibility
+
+Before any expensive rural-reference search, PGD and `tas` native 2-D lon/lat
+coordinates are verified. Version 2.0.1 uses a default tolerance of `1e-4` degree
+to accommodate harmless coordinate rounding (for example, differences of order
+`5e-5` degree) while still rejecting materially displaced grids. This check never
+regrids or interpolates data. Override it explicitly with `--coord-tolerance` when
+needed.
+
 ## Run
 
-Edit `scripts/run_UHI_process_parallel.py`, then:
+Use the public CLI; source-code editing is not required:
 
 ```bash
-python scripts/run_UHI_process_parallel.py
+python -u grid_uhi_mask/scripts/run_UHI_process_parallel.py \
+  --pgd /path/to/PGD.nc \
+  --tas /path/to/tas.nc \
+  --output /path/to/UHI_MOD_MASK_V2_0_1 \
+  --coord-tolerance 1e-4 \
+  --validate-only
 ```
+
+After a successful preflight, remove `--validate-only` to run the calculation.

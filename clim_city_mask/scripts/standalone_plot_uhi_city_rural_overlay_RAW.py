@@ -54,7 +54,7 @@ from spatial_UHI_mask import build_masks, find_rural_reference_once, to_yx  # no
 # USER SETTINGS
 # ============================================================
 UHI_DIR = Path(
-    "/archive/globc/quenum/Results/Data_UHI_Paper/UHI_MOD_MASK_V2/"
+    "/archive/globc/quenum/Results/Data_UHI_Paper/UHI_MOD_MASK_V2_0_1/"
     "Min70_sea0p30_urb0p20_rur0p60"
 )
 
@@ -555,7 +555,7 @@ def process_city(city_row, ds, lon2d, lat2d):
         coords={"lon": (("y", "x"), lon2d), "lat": (("y", "x"), lat2d)},
         attrs={
             "city": city_name,
-            "method_version": "2.0.0",
+            "method_version": "2.0.1",
             "uhi_variable": UHI_VAR,
             "time_index": int(TIME_INDEX),
             "rural_mode": metadata.get("rural_mode", RURAL_MODE),

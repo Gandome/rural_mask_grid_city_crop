@@ -4,7 +4,7 @@
 
 `rural_mask_grid_city_crop` provides the **MOD_Mask** adaptive rural-reference method for gridded Urban Heat Island (UHI) calculation together with GHSL-based city extraction and publication-quality city/rural maps.
 
-**Current public version: 2.0.0**
+**Current public version: 2.0.1**
 
 ## What is new in v2
 
@@ -15,6 +15,7 @@
 - Elevation-filtered UHI uses only rural cells satisfying `|z_urban-z_rural| <= LR`, with standard limits of 100, 200, 300 and 500 m.
 - Static diagnostics are written to NetCDF: `Ratio_used`, `Min_Value_used`, `nbg`, `n_total_reference`, `n_rural_reference`, `rural_search_success`, and `rural_reference_frequency`.
 - The runner now accepts explicit files, directories or glob patterns and validates PGD/tas grid compatibility before computation.
+- v2.0.1 uses a default coordinate-verification tolerance of `1e-4°`, allowing metre-scale lon/lat rounding differences while retaining strict grid validation and performing no regridding.
 - A rectangular PGD subdomain can be matched safely to a larger tas grid when 2-D lon/lat coordinates prove the alignment.
 - The standalone city plot can reconstruct the **exact MOD_Mask rural footprint**, not merely an expanded bounding box.
 
@@ -28,7 +29,7 @@ rural_mask_grid_city_crop/
 ├── tests/                  # regression tests
 ├── .github/workflows/      # continuous integration
 ├── CITATION.cff
-├── RELEASE_NOTES_v2.0.0.md
+├── RELEASE_NOTES_v2.0.1.md
 └── LICENSE
 ```
 
@@ -64,11 +65,24 @@ Before launching an expensive UHI computation:
 python grid_uhi_mask/scripts/run_UHI_process_parallel.py \
   --pgd /path/to/PGD.nc \
   --tas /path/to/tas.nc \
-  --output ./UHI_MOD_MASK_V2 \
+  --output ./UHI_MOD_MASK_V2_0_1 \
+  --coord-tolerance 1e-4 \
   --validate-only
 ```
 
 This verifies required PGD fields, input discovery, horizontal grid compatibility and urban/rural mask construction.
+
+
+### Grid-coordinate tolerance
+
+MOD_Mask compares native 2-D longitude/latitude coordinates before using a PGD/tas grid.
+The v2.0.1 default is `--coord-tolerance 1e-4` degrees. This is a validation
+tolerance only: it does **not** regrid, interpolate, or overwrite coordinates. The
+default was chosen after the ALPX3 PGD/tas reproducibility test showed symmetric
+rounding differences of about `±5e-5°` (maximum displacement about 5.6 m), which
+is negligible relative to the approximately 2.5 km model grid. Users working with
+higher-precision coordinates or substantially finer (especially sub-kilometre) grids
+should set a smaller tolerance explicitly after checking the native coordinates.
 
 ## Run MOD_Mask/UHI
 
@@ -76,7 +90,8 @@ This verifies required PGD fields, input discovery, horizontal grid compatibilit
 python -u grid_uhi_mask/scripts/run_UHI_process_parallel.py \
   --pgd /path/to/PGD.nc \
   --tas /path/to/tas_2000.nc \
-  --output /path/to/UHI_MOD_MASK_V2 \
+  --output /path/to/UHI_MOD_MASK_V2_0_1 \
+  --coord-tolerance 1e-4 \
   --min-values 70 \
   --sea-water-thresholds 0.30 \
   --urban-thresholds 0.20 \
@@ -199,7 +214,7 @@ python clim_city_mask/scripts/standalone_plot_uhi_city_rural_overlay_RAW_v2.py \
   --city-gpkg clim_city_mask/data/GHS_UCDB_REGION_EUROPE_R2024A.gpkg \
   --cities Grenoble Chambery Geneva \
   --rural-mode exact \
-  --output ./output_city_uhi_figures_RAW_v2
+  --output ./output_city_uhi_figures_RAW_v2_0_1
 ```
 
 Raw UHI values are preserved. The display color limits do not normalize or alter NetCDF values.

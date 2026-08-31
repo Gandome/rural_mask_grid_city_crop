@@ -1,6 +1,6 @@
 """MOD_Mask / gridded UHI package, version 2."""
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 from .urban_mask import build_masks, classify_grid_points, to_yx
 from .rural_reference import (

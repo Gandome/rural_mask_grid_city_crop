@@ -186,3 +186,47 @@ def test_grid_alignment_finds_contiguous_pgd_subset(tmp_path):
     assert (a.yslice.start, a.yslice.stop) == (1, 6)
     assert (a.xslice.start, a.xslice.stop) == (2, 7)
     assert a.target_shape == (5, 5)
+
+
+def test_grid_alignment_v201_default_accepts_rounding_level_offsets(tmp_path):
+    """The v2.0.1 default accepts metre-scale coordinate quantization only."""
+    from spatial_UHI_mask.grid_alignment import determine_grid_alignment
+
+    y, x = np.meshgrid(np.arange(4), np.arange(5), indexing="ij")
+    lon = 5.0 + 0.02 * x + 0.001 * y
+    lat = 44.0 + 0.02 * y
+
+    # Mimic independent coordinate quantization/rounding, bounded by 5e-5 degree.
+    phase = np.where((x + y) % 2 == 0, 1.0, -1.0)
+    lon_tas = lon + phase * 4.9999e-5
+    lat_tas = lat - phase * 4.9998e-5
+
+    pgd = tmp_path / "pgd_rounding.nc"
+    tas = tmp_path / "tas_rounding.nc"
+    _write_synthetic_pgd(pgd, lon, lat)
+    _write_synthetic_tas(tas, lon_tas, lat_tas)
+
+    a = determine_grid_alignment(pgd, tas)
+    assert a.method == "same_shape_coordinates_verified"
+    assert a.is_full_grid
+    assert 4.9e-5 < a.max_lon_error_deg < 1.0e-4
+    assert 4.9e-5 < a.max_lat_error_deg < 1.0e-4
+
+
+def test_grid_alignment_v201_default_rejects_materially_larger_offset(tmp_path):
+    """The relaxed default remains a validator and rejects >1e-4 degree shifts."""
+    import pytest
+    from spatial_UHI_mask.grid_alignment import determine_grid_alignment
+
+    y, x = np.meshgrid(np.arange(4), np.arange(5), indexing="ij")
+    lon = 5.0 + 0.02 * x + 0.001 * y
+    lat = 44.0 + 0.02 * y
+
+    pgd = tmp_path / "pgd_shift.nc"
+    tas = tmp_path / "tas_shift.nc"
+    _write_synthetic_pgd(pgd, lon, lat)
+    _write_synthetic_tas(tas, lon + 2.0e-4, lat)
+
+    with pytest.raises(ValueError, match="same shape but their lon/lat grids do not match"):
+        determine_grid_alignment(pgd, tas)
+

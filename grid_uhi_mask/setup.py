@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="grid_uhi_mask",
-    version="2.0.0",
+    version="2.0.1",
     packages=find_packages(),
     install_requires=["numpy>=1.24", "xarray>=2023.1", "netCDF4>=1.6"],
     author="Gandome Mayeul Quenum",

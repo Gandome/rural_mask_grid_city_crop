@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Public command-line runner for MOD_Mask / UHI version 2.0.0.
+"""Public command-line runner for MOD_Mask / UHI version 2.0.1.
 
 Examples
 --------
@@ -9,7 +9,7 @@ Single ALPX3 yearly file::
     python grid_uhi_mask/scripts/run_UHI_process_parallel.py \
         --pgd /path/to/PGD.nc \
         --tas /path/to/tas_2000.nc \
-        --output /path/to/UHI_MOD_MASK_V2 \
+        --output /path/to/UHI_MOD_MASK_V2_0_1 \
         --nproc 1
 
 Multiple files, directories, and shell-style glob patterns are accepted after
@@ -40,7 +40,7 @@ from spatial_UHI_mask import (  # noqa: E402
     to_yx,
 )
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 
 
 def log(msg):
@@ -117,7 +117,16 @@ def build_parser():
 
     p.add_argument("--nproc", type=int, default=1, help="file-level worker processes")
     p.add_argument("--progress-every", type=int, default=100, help="print reference-search progress every N urban cells; 0 disables")
-    p.add_argument("--coord-tolerance", type=float, default=1.0e-5, help="maximum lon/lat mismatch in degrees when verifying grids")
+    p.add_argument(
+        "--coord-tolerance",
+        type=float,
+        default=1.0e-4,
+        help=(
+            "maximum lon/lat mismatch in degrees when verifying grids; "
+            "the 1e-4 default tolerates small coordinate-rounding differences "
+            "without regridding"
+        ),
+    )
     p.add_argument("--validate-only", action="store_true", help="validate files/grid alignment and masks, but do not compute UHI")
     p.add_argument("--version", action="version", version=f"MOD_Mask {VERSION}")
     return p
@@ -178,6 +187,7 @@ def main(argv=None):
     if len(tas_files) > 5:
         log(f"  ... {len(tas_files) - 5} more")
     log(f"Output    : {args.output}")
+    log(f"Grid tol. : {args.coord_tolerance:.3e} deg")
 
     # Validate alignment before any expensive rural-reference search.
     alignment = determine_grid_alignment(pgd_file, tas_files[0], args.coord_tolerance)

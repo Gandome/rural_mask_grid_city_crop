@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.1 — 2026-08-31
+
+### Grid-alignment patch
+- Increased the default PGD/tas coordinate-verification tolerance from `1e-5°` to `1e-4°`.
+- The change addresses harmless lon/lat rounding differences observed in the public ALPX3 reproducibility test: approximately `±5e-5°`, corresponding to at most about 5.6 m, versus an approximately 2.5 km model grid.
+- Grid verification remains mandatory. The tolerance does not trigger regridding, interpolation, or coordinate replacement.
+- Added explicit `--coord-tolerance 1e-4` to the ALPX3 validation and production examples.
+- Added regression tests confirming that rounding-level offsets are accepted by the v2.0.1 default and larger offsets are rejected.
+
+### Packaging and metadata
+- Updated package/software metadata and method-version attributes to `2.0.1`.
+- Added v2.0.1 release and GitHub-publication notes.
+- Removed cached pytest artifacts from the public ZIP.
+
 ## 2.0.0 — 2026-08-24
 
 ### UHI / MOD_Mask

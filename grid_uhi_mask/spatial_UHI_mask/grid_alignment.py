@@ -94,13 +94,19 @@ def _nearest_index(lon2d, lat2d, lon0, lat0):
 def determine_grid_alignment(
     pgd_file,
     tas_file,
-    coord_tolerance_deg: float = 1.0e-5,
+    coord_tolerance_deg: float = 1.0e-4,
 ) -> GridAlignment:
     """Validate PGD/tas grids and find a matching contiguous tas crop if needed.
 
-    If the horizontal shapes are identical, the full tas grid is used. When the
-    PGD is a rectangular subset of the tas grid and both datasets expose 2-D
-    lon/lat coordinates, the corresponding contiguous tas slice is identified
+    If the horizontal shapes are identical, the full tas grid is used only after
+    the 2-D lon/lat coordinates agree within ``coord_tolerance_deg``.  The v2.0.1
+    default (1e-4 degree) is intentionally small relative to kilometre-scale
+    regional-climate grids while allowing harmless coordinate rounding at about
+    the 1e-5--5e-5 degree level.  It is a validation tolerance only: no spatial
+    regridding, interpolation, or coordinate replacement is performed.
+
+    When the PGD is a rectangular subset of the tas grid and both datasets expose
+    2-D lon/lat coordinates, the corresponding contiguous tas slice is identified
     from the PGD corner coordinates and verified against every PGD coordinate.
     """
     pgd_file = Path(pgd_file)
